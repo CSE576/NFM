@@ -1,0 +1,6 @@
+huggingface-hub
+numpy
+pandas
+python-dotenv
+requests
+torch
