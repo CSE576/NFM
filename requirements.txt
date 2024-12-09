@@ -4,3 +4,8 @@ pandas
 python-dotenv
 requests
 torch
+lmdb
+colorlog
+tensorboardX
+colorama
+torch-geometric

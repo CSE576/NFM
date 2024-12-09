@@ -61,17 +61,17 @@ def llm_rerank_list(encoder_model_name="intfloat/e5-small-v2", llama_model_name 
     titles.columns = ['item', 'title']
 
     # load inference results
-    fname = "inference_complete_NFM-Nov-16-2024_18-02-45.pth.txt"  # TODO: CHANGE THIS
-    nfm_pre_dict, nfm_his_dict = parse_results_from_path(fname)  # nfm_his_dict is acquired here
+    fname = "rec-nfm_NFM-Nov-16-2024_18-02-45.pth.txt"  # TODO: CHANGE THIS
+    nfm_pre_dict, nfm_his_dict = parse_sampled_results_from_path(fname)  # nfm_his_dict is acquired here
 
     # result storage
     nfm_reranker_dict={}
 
     # re-rank: encoder + similarity comparison
-    evaluate_reranker(llm_model_name=encoder_model_name, nfm_reranker_dict=nfm_reranker_dict, is_encoder=True, predictions_dict=nfm_pre_dict, user_history_dict=nfm_his_dict, titles=titles)
+    evaluate_reranker(llm_model_name=encoder_model_name, nfm_reranker_dict=nfm_reranker_dict, is_encoder=True, predictions_dict=nfm_pre_dict, user_history_dict=nfm_his_dict, titles=titles, pairs=pairs)
 
     # re-rank: prompt engineering
-    evaluate_reranker(llm_model_name=llama_model_name, nfm_reranker_dict=nfm_reranker_dict, is_encoder=False, predictions_dict=nfm_pre_dict, nfm_reranker_dict=nfm_reranker_dict, user_history_dict=nfm_his_dict, titles=titles)
+    evaluate_reranker(llm_model_name=llama_model_name, nfm_reranker_dict=nfm_reranker_dict, is_encoder=False, predictions_dict=nfm_pre_dict, user_history_dict=nfm_his_dict, titles=titles, pairs=pairs)
 
 
 def main():

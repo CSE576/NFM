@@ -7,9 +7,10 @@ from huggingface_hub import InferenceClient
 import requests
 import numpy as np
 import json
+import random
 
 
-def parse_results_from_path(file_path):
+def parse_sampled_results_from_path(file_path, sample_size=100):
     '''
     Parse the data from complete inference results
     '''
@@ -27,7 +28,19 @@ def parse_results_from_path(file_path):
     History: [1291,13248,10139,11302,10283,17206]
     '''
 
+    # Filter out blocks with multiple users
+    single_user_blocks = []
     for block in lines:
+        user_matches = re.search(r"User \[([^\]]+)\]", block)
+        if user_matches:
+            users = list(map(int, user_matches.group(1).split(',')))
+            if len(users) == 1:  # Include only blocks with a single user
+                single_user_blocks.append(block)
+    
+    # Sample 200 blocks randomly from single-user blocks
+    sampled_blocks = random.sample(single_user_blocks, min(len(single_user_blocks), sample_size))
+
+    for block in sampled_blocks:
         # Extract all users, ground truth, predictions, and history using regex
         user_matches = re.search(r"User \[([^\]]+)\]", block)
         gt_match = re.search(r"Ground Truth: \[(\d+)\]", block)
@@ -35,24 +48,30 @@ def parse_results_from_path(file_path):
         history_match = re.search(r"History: \[([^\]]+)\]", block)
 
         if user_matches and gt_match and predictions_match and history_match:
-            users = list(map(int, user_matches.group(1).split(',')))  # NOTE: There can be multiple users with the same most recent history
+            user = int(user_matches.group(1))  # Single user guaranteed
             ground_truth = int(gt_match.group(1))
             predictions_list = list(map(int, predictions_match.group(1).split(',')))
             history_list = list(map(int, history_match.group(1).split(',')))
 
-            # Populate the dictionaries for all users listed
-            if len(users) > 1:
-                print(users)  # sanity check
-
-            for user in reversed(users):
-                if user in predictions_dict:
-                  print(f"User {user} already recorded.")  # sanity check
-                else:
-                  predictions_dict[user] = predictions_list
-                  full_history_dict[user] = [history_list, [ground_truth]]  # isolate out the last item
-                  break
+            # Populate the dictionaries
+            if user in predictions_dict:
+                print(f"User {user} already recorded.")  # sanity check
+            else:
+                predictions_dict[user] = predictions_list
+                full_history_dict[user] = [history_list, [ground_truth]]
         else:
             print(f"Skipped block: {block}")  # sanity check
+    
+    # Save results to JSON files
+    predictions_file = "sampled_predictions_dict.json"
+    with open(predictions_file, "w") as pred_file:
+        json.dump(predictions_dict, pred_file, indent=4)
+    print(f"Saved predictions to {predictions_file}")
+
+    history_file = "sampled_full_history_dict.json"
+    with open(history_file, "w") as hist_file:
+        json.dump(full_history_dict, hist_file, indent=4)
+    print(f"Saved history to {history_file}")
 
     return predictions_dict, full_history_dict
 
@@ -81,7 +100,7 @@ def reranker_llama_stream(predictions: List[int], user_history: List[int],model_
     prompt="You are a expert in recommending items to user.\n"
 
     previous_item_list = user_history[0]  # leave out the last interaction
-    if titles:
+    if titles is not None and not titles.empty:
         for item in previous_item_list:
             item_title = extract_title(item, titles)
             prompt += f"User has previously interacted with this item with title{item_title}.\n"
@@ -89,7 +108,7 @@ def reranker_llama_stream(predictions: List[int], user_history: List[int],model_
     item_list = predictions
     prompt += f"These are the item_ids that you need to rerank:{item_list}./n"
     prompt += "Below are the information of the items./n"
-    if titles:
+    if titles is not None and not titles.empty:
         titles_dict = {item: extract_title(item, titles) for item in item_list}
         for item, title in titles_dict.items():
             prompt += f"Item_Id:{item}.Title: {title}\n"
@@ -138,14 +157,14 @@ def reranker_sentence_transformers(predictions, user_history, model_name, titles
 
     previous_item_list = user_history[0]  # leave out the last item
     previous_item_info=""
-    if titles:
+    if titles is not None and not titles.empty:
         for item in previous_item_list:
             item_title = extract_title(item, titles)
             previous_item_info += f"{item_title}.\n"
 
     item_list = predictions
     items_info = {item: "" for item in item_list}
-    if titles:
+    if titles is not None and not titles.empty:
         titles_dict = {item: extract_title(item, titles) for item in item_list}
         for item, title in titles_dict.items():
             items_info[item] += f"Title: {title}\n"
@@ -161,7 +180,7 @@ def reranker_sentence_transformers(predictions, user_history, model_name, titles
     return ranked_items[::-1]
 
 
-def get_hit_rate_at_n(N, results_dict, history_dict, num_items=100000):
+def get_hit_rate_at_n(N, results_dict, history_dict, num_items=2000):
     '''
     Returns the proportion of users whose top N recommendations in the results_dict
     contains the ground truth item in history_dict.
@@ -236,16 +255,16 @@ if __name__ == "__main__":
     titles.columns = ['item', 'title']
 
     # load inference results
-    fname = "inference_complete_NFM-Nov-16-2024_18-02-45.pth.txt"  # TODO: CHANGE THIS
-    nfm_pre_dict, nfm_his_dict = parse_results_from_path(fname)  # nfm_his_dict is acquired here
+    fname = "rec-nfm_NFM-Nov-16-2024_18-02-45.pth.txt"  # TODO: CHANGE THIS
+    nfm_pre_dict, nfm_his_dict = parse_sampled_results_from_path(fname)  # nfm_his_dict is acquired here
 
     # result storage
     nfm_reranker_dict={}
 
     # re-rank: encoder + similarity comparison
     encoder_model_name = "intfloat/e5-small-v2"
-    evaluate_reranker(llm_model_name=encoder_model_name, nfm_reranker_dict=nfm_reranker_dict, is_encoder=True, predictions_dict=nfm_pre_dict, user_history_dict=nfm_his_dict, titles=titles)
+    evaluate_reranker(llm_model_name=encoder_model_name, nfm_reranker_dict=nfm_reranker_dict, is_encoder=True, predictions_dict=nfm_pre_dict, user_history_dict=nfm_his_dict, titles=titles, pairs=pairs)
 
     # re-rank: prompt engineering
     llama_model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
-    evaluate_reranker(llm_model_name=llama_model_name, nfm_reranker_dict=nfm_reranker_dict, is_encoder=False, predictions_dict=nfm_pre_dict, nfm_reranker_dict=nfm_reranker_dict, user_history_dict=nfm_his_dict, titles=titles)
+    evaluate_reranker(llm_model_name=llama_model_name, nfm_reranker_dict=nfm_reranker_dict, is_encoder=False, predictions_dict=nfm_pre_dict, user_history_dict=nfm_his_dict, titles=titles, pairs=pairs)
